@@ -1,0 +1,1 @@
+otpauth://totp/discord:giita%20(Discord)?secret=ennjnhk4pomtu54wlqvywd2rnbxtodhr&issuer=discord
