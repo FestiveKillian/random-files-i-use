@@ -45,14 +45,11 @@
 #include "store/v2/tf_store_preview_item2.h"
 #include "item_ad_panel.h"
 #include "client_community_market.h"
+#include "tf_quest_map_panel.h"
 // memdbgon must be the last include file in a .cpp file!!!
 #include <tier0/memdbgon.h>
 
 
-#ifdef STAGING_ONLY
-extern ConVar tf_use_card_tooltips;
-extern ConVar tf_weapon_force_allow_inspect;
-#endif // STAGING_ONLY
 
 ConVar tf_trade_up_use_count( "tf_trade_up_use_count", "3", FCVAR_ARCHIVE | FCVAR_HIDDEN );
 
@@ -260,6 +257,17 @@ static bool HasResettableScoreAttributes ( const CEconItemView *pEconItemView, c
 	return false;
 }
 
+bool BCanPreviewPaintKit( const CEconItemView* pItem )
+{
+	if ( !pItem || !pItem->IsValid() )
+		return false;
+
+	if ( IsPaintKitTool( pItem->GetItemDefinition() ) )
+		return true;
+
+	return IsValidPickupWeaponSlot( pItem->GetItemDefinition()->GetDefaultLoadoutSlot() );
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
@@ -414,7 +422,6 @@ CBackpackPanel::CBackpackPanel( vgui::Panel *parent, const char *panelName ) : C
 
 	m_nNumActivePages = 0;
 
-	m_pInspectPanel = new CTFItemInspectionPanel( this, "InspectionPanel" );
 	m_pInspectCosmeticPanel = new CTFStorePreviewItemPanel2( this, "Resource/UI/econ/InspectionPanel_Cosmetic.res", "storepreviewitem", NULL );
 	m_pCollectionCraftPanel = NULL;
 	m_pHalloweenOfferingPanel = NULL;
@@ -422,7 +429,7 @@ CBackpackPanel::CBackpackPanel( vgui::Panel *parent, const char *panelName ) : C
 
 	CancelToolSelection();
 
-	ListenForGameEvent( "gc_connected" );
+	ListenForGameEvent( "econ_inventory_connected" );
 }
 
 CBackpackPanel::~CBackpackPanel()
@@ -670,7 +677,7 @@ void CBackpackPanel::SetPageButtonTextColorBasedOnContents()
 		CExLabel* pNew = dynamic_cast<CExLabel*>( m_Pages[i]->FindChildByName( "New" ) );
 		if ( pNew )
 		{
-			pNew->SetVisible( nNewCount > 0 );
+			pNew->SetVisible( false );
 		}
 	}
 }
@@ -845,7 +852,7 @@ void CBackpackPanel::FireGameEvent( IGameEvent *event )
 {
 	static CSchemaItemDefHandle pItemDef_BasePaintCan( "Paint Can" );
 	const char *type = event->GetName();
-	if ( Q_strcmp( "gc_connected", type ) == 0 )
+	if ( Q_strcmp( "econ_inventory_connected", type ) == 0 )
 	{
 		if ( !m_bInitializedSeenItems )
 		{
@@ -999,10 +1006,6 @@ void CBackpackPanel::OnShowPanel( bool bVisible, bool bReturningFromArmory )
 
 		m_nNumActivePages = 0;
 
-#ifdef STAGING_ONLY
-		// Reset pinned-state of the card
-		m_pMouseOverCardPanel->PinCard( false );
-#endif
 	}
 	else
 	{
@@ -1010,11 +1013,6 @@ void CBackpackPanel::OnShowPanel( bool bVisible, bool bReturningFromArmory )
 		{
 			StopDrag( false );
 		}
-	}
-
-	if ( m_pInspectPanel )
-	{
-		m_pInspectPanel->SetVisible( false );
 	}
 
 	if ( m_pInspectCosmeticPanel )
@@ -1273,7 +1271,7 @@ void CBackpackPanel::AssignItemToPanel( CItemModelPanel *pPanel, int iIndex )
 	CExLabel *pNewPanel = dynamic_cast< CExLabel* >( pPanel->FindChildByName( "New" ) );
 	if ( pNewPanel )
 	{
-		pNewPanel->SetVisible( !bSeen );
+		pNewPanel->SetVisible( false );
 	}
 
 	pPanel->DirtyDescription();
@@ -1833,7 +1831,7 @@ void CBackpackPanel::AddPaintToContextMenu( Menu *pPaintSubMenu, item_definition
 
 		Menu *pSubMenu = new Menu( this, "PaintSubMenu" );
 		pSubMenu->SetBorder( scheme()->GetIScheme( GetScheme() )->GetBorder( pszContextMenuBorder ) );
-		pSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont ) );
+		pSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont, IsProportional() ) );
 		int iPos = pPaintSubMenu->AddCascadingMenuItem( cBuff, this, pSubMenu );
 
 		CItemMaterialCustomizationIconPanel *pCustomPanel = new CItemMaterialCustomizationIconPanel( pPaintSubMenu, "paint" );
@@ -1872,7 +1870,7 @@ void CBackpackPanel::AddCommerceToContextMenu( Menu *pMenu, const char* pszActio
 
 		Menu *pSubMenu = new Menu( this, "CommerceSubMenu" );
 		pSubMenu->SetBorder( scheme()->GetIScheme( GetScheme() )->GetBorder( pszContextMenuBorder ) );
-		pSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont ) );
+		pSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont, IsProportional() ) );
 		pMenu->AddCascadingMenuItem( pItemDef->GetItemBaseName(), this, pSubMenu );
 
 		AddCommerceSubmenus( pSubMenu, iItemDefIndex, pszActionFmt );
@@ -1884,6 +1882,8 @@ void CBackpackPanel::AddCommerceToContextMenu( Menu *pMenu, const char* pszActio
 //-----------------------------------------------------------------------------
 void CBackpackPanel::OpenContextMenu()
 {
+	return;
+
 	CUtlVector<CEconItemView*> vecSelectedItems; 
 	for ( int i = 0; i < m_pItemModelPanels.Count(); i++ )
 	{
@@ -1901,21 +1901,25 @@ void CBackpackPanel::OpenContextMenu()
 	const char *pszContextMenuBorder = "NotificationDefault";
 	const char *pszContextMenuFont = "HudFontMediumSecondary";
 	m_pContextMenu->SetBorder( scheme()->GetIScheme( GetScheme() )->GetBorder( pszContextMenuBorder ) );
-	m_pContextMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont ) );
+	m_pContextMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont, IsProportional() ) );
 
 	if ( vecSelectedItems.Count() == 1 )
 	{
+		const char *pUserTxnCC = GCClientSystem()->GetTxnCountryCode();
+		bool bUserChanceRestricted = pUserTxnCC && !BEconCountryAllowDecodableContainers( pUserTxnCC );
+
 		const CEconItemView *pItem = vecSelectedItems.Head();
 		const CTFItemDefinition *pItemDef = pItem->GetStaticData();
 		static CSchemaItemDefHandle DuckBadgeItemDef( "Duck Badge" );
 		static CSchemaItemDefHandle StrangeCountTransferItemDef( "Strange Count Transfer Tool" );
+		static CSchemaItemDefHandle ContrackerItemDef( "Activated Campaign 3 Pass" );
 
 		// Tools of any kind can't be used if they are in escrow.
 		static CSchemaAttributeDefHandle pAttrib_ToolEscrowUntil( "tool escrow until date" );
 		uint32 unEscrowTime;
 		const bool bToolIsInEscrow = pItem->FindAttribute( pAttrib_ToolEscrowUntil, &unEscrowTime )
 									&& unEscrowTime > CRTime::RTime32TimeCur();
-			
+
 		const IEconTool *pEconTool = pItem->GetItemDefinition()->GetEconTool();
 
 		const bool bIsTool = pItem->GetStaticData()->IsTool() && (pEconTool != NULL);
@@ -1936,32 +1940,37 @@ void CBackpackPanel::OpenContextMenu()
 		{
 			Assert( pEconTool );
 
-			const int nTokens = pEconTool->GetUseCommandCount( pItem );
-			for ( int i = 0; i < nTokens; ++i )
-			{
-				const char *pszToolUsageString = pEconTool->GetUseCommandLocalizationToken( pItem, i );
+			// If user is chance restriction, and this is a decoder_ring, skip its default commands.
+			bool bRestricted = bUserChanceRestricted && pEconTool && Q_strcmp( pEconTool->GetTypeName(), "decoder_ring" ) == 0;
 
-				// If we didn't have a custom usage string, fall back to a sane default based on whether or
-				// not we're a consumable or not.
-				if ( !pszToolUsageString )
+			if ( !bRestricted )
+			{
+				const int nTokens = pEconTool->GetUseCommandCount( pItem );
+				for ( int i = 0; i < nTokens; ++i )
 				{
-					pszToolUsageString = bIsGCConsumable ? "#ConsumeItem" : "#ApplyOnItem";
+					const char *pszToolUsageString = pEconTool->GetUseCommandLocalizationToken( pItem, i );
+
+					// If we didn't have a custom usage string, fall back to a sane default based on whether or
+					// not we're a consumable or not.
+					if ( !pszToolUsageString )
+					{
+						pszToolUsageString = bIsGCConsumable ? "#ConsumeItem" : "#ApplyOnItem";
+					}
+
+					const char *pszContext = pEconTool->GetUseCommand( pItem, i );
+					contextMenuBuilder.AddMenuItem( pszToolUsageString, new KeyValues( pszContext ), "primaryaction" );
 				}
 
-				const char *pszContext = pEconTool->GetUseCommand( pItem, i );
-				contextMenuBuilder.AddMenuItem( pszToolUsageString, new KeyValues( pszContext ), "primaryaction" );
+				// Hack: We should really ask the tool if the command supplants trade. For now, if we have two
+				// things, then one of them is trade, so skip it.
+				bSkipAddTrade = nTokens > 1;
 			}
-
-			// Hack: We should really ask the tool if the command supplants trade. For now, if we have two
-			// things, then one of them is trade, so skip it.
-			bSkipAddTrade = nTokens > 1;
 		}
 		else if ( pItem->GetItemDefinition()->GetCapabilities() & ITEM_CAP_DECODABLE )
 		{
-			
 			static CSchemaAttributeDefHandle pAttrDef_CanShuffleCrateContents( "can shuffle crate contents" );
 
-			if ( pItem->FindAttribute( pAttrDef_CanShuffleCrateContents ) )
+			if ( !bUserChanceRestricted && pItem->FindAttribute( pAttrDef_CanShuffleCrateContents ) )
 			{
 				contextMenuBuilder.AddMenuItem( "#ShuffleContents", new KeyValues( "Context_Shuffle" ), "primaryaction" );
 			}
@@ -1970,12 +1979,7 @@ void CBackpackPanel::OpenContextMenu()
 			{
 				contextMenuBuilder.AddMenuItem( "#UseKey", new KeyValues( "Context_OpenCrateWithKey" ), "primaryaction" );
 			}
-			
-			if ( GetDecodedByItemDefIndex( pItem ) )
-			{
-				contextMenuBuilder.AddMenuItem( "#GetKey", new KeyValues( "Context_GetItemFromStore" ), "primaryaction" );
-				contextMenuBuilder.AddMenuItem( "#BuyAndUseKey", new KeyValues( "Context_BuyKeyAndOpenCrate" ), "primaryaction" );
-			}
+
 		}
 		else if ( pItem->GetItemDefinition()->GetCapabilities() & ITEM_CAP_HAS_SLOTS )
 		{
@@ -2000,23 +2004,24 @@ void CBackpackPanel::OpenContextMenu()
 				contextMenuBuilder.AddMenuItem( "#GetDuckToken", new KeyValues( "Context_GetItemFromStore" ), "primaryaction" );
 			}
 		}
+		else if ( pItem->GetItemDefinition() == ContrackerItemDef )
+		{
+			contextMenuBuilder.AddMenuItem( "#Context_ConTracker", new KeyValues( "Context_OpenConTracker" ), "primaryaction" );
+		}
 
 		// 3D Inspect
 		float flInspect = 0;
-		static CSchemaAttributeDefHandle pAttrib_WeaponAllowInspect( "weapon_allow_inspect" );
 		static CSchemaAttributeDefHandle pAttrib_CosmeticAllowInspect( "cosmetic_allow_inspect" );
-		if ( pItem && pItem->IsValid() &&
-			( FindAttribute_UnsafeBitwiseCast<attrib_value_t>( pItem, pAttrib_WeaponAllowInspect, &flInspect ) || FindAttribute_UnsafeBitwiseCast<attrib_value_t>( pItem, pAttrib_CosmeticAllowInspect, &flInspect ) 
-#ifdef STAGING_ONLY
-			|| tf_weapon_force_allow_inspect.GetBool()
-#endif
-			) )
+		if ( pItem && pItem->IsValid() && pItem->GetItemDefinition()->CanBackpackInspect() &&
+			( BCanPreviewPaintKit( pItem ) || pItem->GetItemDefinition()->GetCollectionReference() != NULL || ( FindAttribute_UnsafeBitwiseCast<attrib_value_t>( pItem, pAttrib_CosmeticAllowInspect, &flInspect ) && flInspect != 0.f ) )
+			)
 		{
-			if ( flInspect != 0
-#ifdef STAGING_ONLY
-				|| tf_weapon_force_allow_inspect.GetBool() 
-#endif
-				)
+			if ( IsPaintKitTool( pItemDef ) )
+			{
+				// If they clicked on a paintkit item, let them preview the paintkit on all of the items it supports 
+				contextMenuBuilder.AddMenuItem( "#Context_InspectModel", new KeyValues( "Context_PreviewItemsWithPaintkit" ), "primaryaction" );
+			}
+			else
 			{
 				contextMenuBuilder.AddMenuItem( "#Context_InspectModel", new KeyValues( "Context_InspectModel" ), "primaryaction" );
 			}
@@ -2034,7 +2039,7 @@ void CBackpackPanel::OpenContextMenu()
 				{
 					pEquipSubMenu = new Menu( this, "EquipMenu" );
 					pEquipSubMenu->SetBorder( scheme()->GetIScheme( GetScheme() )->GetBorder( pszContextMenuBorder ) );
-					pEquipSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont ) );
+					pEquipSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont, IsProportional() ) );
 
 					contextMenuBuilder.AddCascadingMenuItem( "#Context_Equip", pEquipSubMenu, "primaryaction" );
 				}
@@ -2068,7 +2073,7 @@ void CBackpackPanel::OpenContextMenu()
 			{
 				pMannCoTradeSubMenu = new Menu(this, "MannCoTradeSubMenu");
 				pMannCoTradeSubMenu->SetBorder(scheme()->GetIScheme(GetScheme())->GetBorder(pszContextMenuBorder));
-				pMannCoTradeSubMenu->SetFont(scheme()->GetIScheme(GetScheme())->GetFont(pszContextMenuFont));
+				pMannCoTradeSubMenu->SetFont(scheme()->GetIScheme(GetScheme())->GetFont(pszContextMenuFont, IsProportional()));
 				contextMenuBuilder.AddCascadingMenuItem("#Context_MannCoTrade", pMannCoTradeSubMenu, "customization");
 
 				if ( bCanCraftUp )
@@ -2096,7 +2101,7 @@ void CBackpackPanel::OpenContextMenu()
 			{
 				Menu *pMannCoCoinTradeSubMenu = new Menu( this, "MannCoTradeSubMenu" );
 				pMannCoCoinTradeSubMenu->SetBorder( scheme()->GetIScheme( GetScheme() )->GetBorder( pszContextMenuBorder ) );
-				pMannCoCoinTradeSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont ) );
+				pMannCoCoinTradeSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont, IsProportional() ) );
 				contextMenuBuilder.AddCascadingMenuItem( "#Context_MannCoTrade", pMannCoCoinTradeSubMenu, "customization" );
 
 				int nIndex = pMannCoCoinTradeSubMenu->AddMenuItem( "", new KeyValues( "Command", "command", "Context_CraftUpCollection" ), this );
@@ -2120,16 +2125,7 @@ void CBackpackPanel::OpenContextMenu()
 			uint32 unCurrentDate = CRTime::RTime32TimeCur();
 			if ( pAttrDef_HalloweenOffering && pItem->FindAttribute( pAttrDef_HalloweenOffering ) && pItem->FindAttribute( pAttrDef_DeactiveDate, &unDeactiveDate ) && unDeactiveDate > unCurrentDate )
 			{
-				vgui::MenuItem *pMenuItem = contextMenuBuilder.AddMenuItem( "#Context_HalloweenOffering", new KeyValues( "Context_HalloweenOffering" ), "customization" );
-
-				ImagePanel *pNewImage = new ImagePanel( pMenuItem, "new" );
-				pNewImage->SetZPos( 100 );
-				pNewImage->SetWide( 40 );
-				pNewImage->SetTall( 40 );
-				pNewImage->SetPos( 220, -5 );
-				pNewImage->SetMouseInputEnabled( false );
-				pNewImage->SetShouldScaleImage( true );
-				pNewImage->SetImage( "new" );
+				contextMenuBuilder.AddMenuItem( "#Context_HalloweenOffering", new KeyValues( "Context_HalloweenOffering" ), "customization" );
 			}
 
 			// Change name
@@ -2155,7 +2151,7 @@ void CBackpackPanel::OpenContextMenu()
 					Menu *pPaintSubMenu = NULL;
 					pPaintSubMenu = new Menu( this, "PaintSubMenu" );
 					pPaintSubMenu->SetBorder( scheme()->GetIScheme( GetScheme() )->GetBorder( pszContextMenuBorder ) );
-					pPaintSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont ) );
+					pPaintSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont, IsProportional() ) );
 					contextMenuBuilder.AddCascadingMenuItem( "#Context_Paint", pPaintSubMenu, "customization" );
 
 					CUtlVector<item_definition_index_t> vecOwnedPaints;
@@ -2229,7 +2225,7 @@ void CBackpackPanel::OpenContextMenu()
 						{
 							pStrangePartsSubMenu = new Menu( this, "StrangePartsSubMenu" );
 							pStrangePartsSubMenu->SetBorder( scheme()->GetIScheme( GetScheme() )->GetBorder( pszContextMenuBorder ) );
-							pStrangePartsSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont ) );
+							pStrangePartsSubMenu->SetFont( scheme()->GetIScheme( GetScheme() )->GetFont( pszContextMenuFont, IsProportional() ) );
 							contextMenuBuilder.AddCascadingMenuItem( "#Context_StrangeParts", pStrangePartsSubMenu, "customization" );
 						}
 
@@ -2320,7 +2316,7 @@ void CBackpackPanel::OpenContextMenu()
 		{
 			pMannCoTradeSubMenu = new Menu(this, "MannCoTradeSubMenu");
 			pMannCoTradeSubMenu->SetBorder(scheme()->GetIScheme(GetScheme())->GetBorder(pszContextMenuBorder));
-			pMannCoTradeSubMenu->SetFont(scheme()->GetIScheme(GetScheme())->GetFont(pszContextMenuFont));
+			pMannCoTradeSubMenu->SetFont(scheme()->GetIScheme(GetScheme())->GetFont(pszContextMenuFont, IsProportional()));
 			contextMenuBuilder.AddCascadingMenuItem("#Context_MannCoTrade", pMannCoTradeSubMenu, "customization");
 
 			if (bCanCraftUp)
@@ -2372,13 +2368,6 @@ void CBackpackPanel::OpenContextMenu()
 //-----------------------------------------------------------------------------
 void CBackpackPanel::OnItemPanelMouseRightRelease( vgui::Panel *panel )
 {
-#ifdef STAGING_ONLY
-	if ( tf_use_card_tooltips.GetBool() )
-	{
-		m_pMouseOverCardPanel->PinCard( true );
-	}
-	else
-#endif
 	{
 		CItemModelPanel *pItemPanel = dynamic_cast < CItemModelPanel * > ( panel );
 		if ( pItemPanel && pItemPanel->IsVisible() )
@@ -2941,6 +2930,7 @@ const char *CBackpackPanel::GetGreyOutItemPanelReason( CItemModelPanel *pItemPan
 	return NULL;
 }
 
+
 //-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
@@ -2963,44 +2953,46 @@ void CBackpackPanel::SetBorderForItem( CItemModelPanel *pItemPanel, bool bMouseO
 
 	int iRarity = GetItemQualityForBorder( pItemPanel );
 
-	if ( InToolSelectionMode() && bIsSelectedTool )
 	{
-		// We're in tool application mode, and this panel is the tool being used
-		pszBorder = "BackpackItemBorder_SelfMade";
+		if ( InToolSelectionMode() && bIsSelectedTool )
+		{
+			// We're in tool application mode, and this panel is the tool being used
+			pszBorder = "BackpackItemBorder_SelfMade";
 
-		if ( m_pToolIcon )
-		{
-			int iX, iY;
-			pItemPanel->GetPos( iX, iY );
-			m_pToolIcon->SetPos( iX, iY );
-			m_pToolIcon->SetVisible( true );
+			if ( m_pToolIcon )
+			{
+				int iX, iY;
+				pItemPanel->GetPos( iX, iY );
+				m_pToolIcon->SetPos( iX, iY );
+				m_pToolIcon->SetVisible( true );
+			}
 		}
-	}
-	else if ( bGreyOut )
-	{
-		if( pItemPanel->IsSelected() )
+		else if ( bGreyOut )
 		{
-			pszBorder = g_szItemBorders[iRarity][4];
-		}
-		else
-		{
-			pszBorder = g_szItemBorders[iRarity][3];
-		}
-	}
-	else
-	{
-		
-		if ( pItemPanel->IsSelected() )
-		{
-			pszBorder = g_szItemBorders[iRarity][2];
-		}
-		else if ( bMouseOver )
-		{
-			pszBorder = g_szItemBorders[iRarity][1];
+			if ( pItemPanel->IsSelected() )
+			{
+				pszBorder = g_szItemBorders[iRarity][4];
+			}
+			else
+			{
+				pszBorder = g_szItemBorders[iRarity][3];
+			}
 		}
 		else
 		{
-			pszBorder = g_szItemBorders[iRarity][0];
+
+			if ( pItemPanel->IsSelected() )
+			{
+				pszBorder = g_szItemBorders[iRarity][2];
+			}
+			else if ( bMouseOver )
+			{
+				pszBorder = g_szItemBorders[iRarity][1];
+			}
+			else
+			{
+				pszBorder = g_szItemBorders[iRarity][0];
+			}
 		}
 	}
 
@@ -3742,6 +3734,15 @@ void CBackpackPanel::DoCraftCommonStatClock()
 }
 
 //-----------------------------------------------------------------------------
+// Open up the quest map
+//-----------------------------------------------------------------------------
+void CBackpackPanel::DoOpenConTracker()
+{
+	GetQuestMapPanel()->SetVisible( true );
+	EconUI()->CloseEconUI();
+}
+
+//-----------------------------------------------------------------------------
 // Purpose: Bring up the 3D inspect panel for the selected item
 //-----------------------------------------------------------------------------
 void CBackpackPanel::DoInspectModel()
@@ -3753,33 +3754,75 @@ void CBackpackPanel::DoInspectModel()
 		return;
 
 	CEconItemView *pItem = vecSelected[0]->GetItem();
-	if ( pItem )
+	if ( !pItem )
+		return;
+
+	if ( BCanPreviewPaintKit( pItem ) )
 	{
-		float flInspect = 0;
-		static CSchemaAttributeDefHandle pAttrib_WeaponAllowInspect( "weapon_allow_inspect" );
-		if ( ( FindAttribute_UnsafeBitwiseCast<attrib_value_t>( pItem, pAttrib_WeaponAllowInspect, &flInspect ) && flInspect != 0.f )
-#ifdef STAGING_ONLY
-			|| tf_weapon_force_allow_inspect.GetBool()
-#endif
-			)
+		CCharacterInfoPanel* pCharInfo = dynamic_cast< CCharacterInfoPanel* >( EconUI() );
+		pCharInfo->OpenToPaintkitPreview( vecSelected[0]->GetItem(), true, true );
+	}
+	else
+	{
+		bool bClassCanUse = false;
+		for ( int iClass = TF_FIRST_NORMAL_CLASS; iClass < TF_LAST_NORMAL_CLASS; ++iClass )
 		{
-			m_pInspectPanel->SetVisible( true );
-			m_pInspectPanel->SetItemCopy( vecSelected[0]->GetItem() );
-		}
-		else
-		{
-			for ( int iClass = TF_FIRST_NORMAL_CLASS; iClass < TF_LAST_NORMAL_CLASS; ++iClass )
+			if ( pItem->GetStaticData()->CanBeUsedByClass( iClass ) )
 			{
-				if ( pItem->GetStaticData()->CanBeUsedByClass( iClass ) )
-				{
-					m_pInspectCosmeticPanel->PreviewItem( iClass, pItem );
-					break;
-				}
+				m_pInspectCosmeticPanel->PreviewItem( iClass, pItem );
+				bClassCanUse = true;
+				break;
 			}
-			m_pInspectCosmeticPanel->SetVisible( true );
 		}
+
+		if ( !bClassCanUse )
+		{
+			m_pInspectCosmeticPanel->PreviewItem( TF_FIRST_NORMAL_CLASS, pItem );
+		}
+
+		m_pInspectCosmeticPanel->SetVisible( true );
 	}
 }
+
+void CBackpackPanel::DoPreviewPaintkitsOnItem()
+{
+	CUtlVector< CItemModelPanel* > vecSelected;
+	GetSelectedPanels( SELECT_FIRST, vecSelected );
+
+	if ( vecSelected.IsEmpty() )
+		return;
+
+	CEconItemView *pItem = vecSelected[0]->GetItem();
+	if ( !pItem )
+		return;
+
+	if ( !BCanPreviewPaintKit( pItem ) )
+		return;
+
+	CCharacterInfoPanel* pCharInfo = dynamic_cast< CCharacterInfoPanel* >( EconUI() );
+	pCharInfo->OpenToPaintkitPreview( vecSelected[0]->GetItem(), true, false );
+}
+
+void CBackpackPanel::DoPreviewItemsWithPaintkit()
+{
+	CUtlVector< CItemModelPanel* > vecSelected;
+	GetSelectedPanels( SELECT_FIRST, vecSelected );
+
+	if ( vecSelected.IsEmpty() )
+		return;
+
+	CEconItemView *pItem = vecSelected[0]->GetItem();
+	if ( !pItem )
+		return;
+
+	if ( !BCanPreviewPaintKit( pItem ) )
+		return;
+
+	CCharacterInfoPanel* pCharInfo = dynamic_cast< CCharacterInfoPanel* >( EconUI() );
+	pCharInfo->OpenToPaintkitPreview( vecSelected[0]->GetItem(), false, true );
+}
+
+
 //-----------------------------------------------------------------------------
 void CBackpackPanel::OpenInspectModelPanelAndCopyItem( CEconItemView *pItemView )
 {
@@ -3793,8 +3836,8 @@ void CBackpackPanel::OpenInspectModelPanelAndCopyItem( CEconItemView *pItemView 
 	static CSchemaAttributeDefHandle pAttrib_WeaponAllowInspect( "weapon_allow_inspect" );
 	if ( FindAttribute_UnsafeBitwiseCast<attrib_value_t>( pItemView, pAttrib_WeaponAllowInspect, &flInspect ) && flInspect != 0.f )
 	{
-		m_pInspectPanel->SetVisible( true );
-		m_pInspectPanel->SetItemCopy( pItemView );
+		CCharacterInfoPanel* pCharInfo = dynamic_cast< CCharacterInfoPanel* >( EconUI() );
+		pCharInfo->OpenToPaintkitPreview( pItemView, false, false );
 	}
 	else
 	{
@@ -3827,6 +3870,8 @@ CCollectionCraftingPanel* CBackpackPanel::GetCollectionCraftPanel()
 //-----------------------------------------------------------------------------
 void CBackpackPanel::DoBuyKeyAndOpenCrate()
 {
+	return;
+
 	CUtlVector< CItemModelPanel* > vecSelected;
 	GetSelectedPanels( SELECT_FIRST, vecSelected );
 
@@ -3852,6 +3897,15 @@ void CBackpackPanel::DoBuyKeyAndOpenCrate()
 //-----------------------------------------------------------------------------
 void CBackpackPanel::DoOpenCrateWithKey()
 {
+	const char *pUserTxnCC = GCClientSystem()->GetTxnCountryCode();
+	bool bUserChanceRestricted = pUserTxnCC && !BEconCountryAllowDecodableContainers( pUserTxnCC );
+
+	if ( bUserChanceRestricted )
+	{
+		ShowMessageBox( "#ToolContainerRestrictedTitle", "#ToolContainerRestricted", "#GameUI_OK" );
+		return;
+	}
+
 	CUtlVector< CItemModelPanel* > vecSelected;
 	GetSelectedPanels( SELECT_FIRST, vecSelected );
 
@@ -3874,7 +3928,7 @@ void CBackpackPanel::DoOpenCrateWithKey()
 void CBackpackPanel::DoEquipForClass( int nClass )
 {
 	// Negative because reasons
-	EconUI()->OpenEconUI( -nClass );	
+	EconUI()->OpenEconUI( -nClass );
 }
 
 //-----------------------------------------------------------------------------
@@ -4138,12 +4192,6 @@ void CBackpackPanel::OnCommand( const char *command )
 	{
 		DoCraftCommonStatClock();
 	}
-#ifdef STAGING_ONLY
-	else if ( !V_strnicmp( command, "unpin", 5 ) )
-	{
-		m_pMouseOverCardPanel->PinCard( false );
-	}
-#endif
 
 	BaseClass::OnCommand( command );
 }
@@ -4258,8 +4306,8 @@ int	CBackpackPanel::GetItemQualityForBorder( CItemModelPanel* pItemPanel ) const
 	if ( pItemPanel->HasItem() && ( cl_showbackpackrarities.GetInt() > 0 || m_bForceShowBackpackRarities )
 				   && ( cl_showbackpackrarities.GetInt() < 2 || pItemPanel->GetItem()->IsMarketable() ) )
 	{
-		uint8 nRarity = pItemPanel->GetItem()->GetItemDefinition()->GetRarity();
-		if ( ( nRarity != k_unItemRarity_Any ) && ( pItemPanel->GetItem()->GetItemQuality() != AE_SELFMADE ) )
+		uint8 nRarity = pItemPanel->GetItem()->GetRarity();
+		if ( ( nRarity != k_unItemRarity_Any ) && ( pItemPanel->GetItem()->GetItemQuality() != AE_SELFMADE ) && ( pItemPanel->GetItem()->GetItemQuality() != AE_UNUSUAL ) )
 		{
 			// translate this quality to rarity
 			return nRarity + AE_RARITY_DEFAULT;
